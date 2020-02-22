@@ -114,13 +114,17 @@ static void print_hist(const kc_c2x_t *h)
 int main(int argc, char *argv[])
 {
 	kc_c2x_t *h;
-	int i, c, k = 31, p = 16;
+	int i, c, k = 31, p = 8;
 	ketopt_t o = KETOPT_INIT;
 	while ((c = ketopt(&o, argc, argv, 1, "k:p:", 0)) >= 0)
 		if (c == 'k') k = atoi(o.arg);
 		else if (c == 'p') p = atoi(o.arg);
 	if (argc - o.ind < 1) {
 		fprintf(stderr, "Usage: kc-c2 [-k %d] [-p %d] <in.fa>\n", k, p);
+		return 1;
+	}
+	if (p < 8) {
+		fprintf(stderr, "ERROR: -p should be at least 8\n");
 		return 1;
 	}
 	h = count_file(argv[o.ind], k, p);
