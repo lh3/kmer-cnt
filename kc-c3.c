@@ -189,6 +189,6 @@ int main(int argc, char *argv[])
 	print_hist(h);
 	for (i = 0; i < 1<<p; ++i)
 		kc_c3_destroy(h->h[i]);
-	free(h);
+	free(h->h); free(h);
 	return 0;
 }

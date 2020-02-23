@@ -13,6 +13,7 @@ KSEQ_INIT(gzFile, gzread)
 KHASHL_SET_INIT(, kc_c4_t, kc_c4, uint64_t, kc_c4_hash, kc_c4_eq)
 
 #define CALLOC(ptr, len) ((ptr) = (__typeof__(ptr))calloc((len), sizeof(*(ptr))))
+#define MALLOC(ptr, len) ((ptr) = (__typeof__(ptr))malloc((len) * sizeof(*(ptr))))
 #define REALLOC(ptr, len) ((ptr) = (__typeof__(ptr))realloc((ptr), (len) * sizeof(*(ptr))))
 
 const unsigned char seq_nt4_table[256] = {
@@ -48,13 +49,12 @@ static inline uint64_t hash64(uint64_t key, uint64_t mask)
 
 typedef struct {
 	int n, m;
-	uint64_t *y;
-	kc_c4_t *h;
+	uint64_t *a;
 } buf_c4_t;
 
 typedef struct {
 	int p;
-	buf_c4_t *b;
+	kc_c4_t **h;
 } kc_c4x_t;
 
 static kc_c4x_t *c4x_init(int p)
@@ -62,25 +62,25 @@ static kc_c4x_t *c4x_init(int p)
 	int i;
 	kc_c4x_t *h;
 	CALLOC(h, 1);
-	CALLOC(h->b, 1<<p);
+	MALLOC(h->h, 1<<p);
 	h->p = p;
 	for (i = 0; i < 1<<p; ++i)
-		h->b[i].h = kc_c4_init();
+		h->h[i] = kc_c4_init();
 	return h;
 }
 
-static inline void c4x_insert_buf(kc_c4x_t *h, uint64_t y)
+static inline void c4x_insert_buf(buf_c4_t *buf, int p, uint64_t y)
 {
-	int pre = y & ((1<<h->p) - 1);
-	buf_c4_t *b = &h->b[pre];
+	int pre = y & ((1<<p) - 1);
+	buf_c4_t *b = &buf[pre];
 	if (b->n == b->m) {
-		b->m = b->m < 16? 16 : b->m + (b->m>>1);
-		REALLOC(b->y, b->m);
+		b->m = b->m < 8? 8 : b->m + (b->m>>1);
+		REALLOC(b->a, b->m);
 	}
-	b->y[b->n++] = y;
+	b->a[b->n++] = y;
 }
 
-static void count_seq_buf(kc_c4x_t *h, int k, int len, char *seq)
+static void count_seq_buf(buf_c4_t *buf, int k, int p, int len, const char *seq)
 {
 	int i, l;
 	uint64_t x[2], mask = (1ULL<<k*2) - 1, shift = (k - 1) * 2;
@@ -91,7 +91,7 @@ static void count_seq_buf(kc_c4x_t *h, int k, int len, char *seq)
 			x[1] = x[1] >> 2 | (uint64_t)(3 - c) << shift;  // reverse strand
 			if (++l >= k) { // we find a k-mer
 				uint64_t y = x[0] < x[1]? x[0] : x[1];
-				c4x_insert_buf(h, hash64(y, mask));
+				c4x_insert_buf(buf, p, hash64(y, mask));
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}
@@ -104,23 +104,25 @@ typedef struct {
 } pldat_t;
 
 typedef struct {
-	int n, m, sum_len;
+	pldat_t *p;
+	int n, m, sum_len, nk;
 	int *len;
 	char **seq;
+	buf_c4_t *buf;
 } stepdat_t;
 
 static void worker_for(void *data, long i, int tid)
 {
-	kc_c4x_t *h = (kc_c4x_t*)data;
-	buf_c4_t *b = &h->b[i];
-	int j;
+	stepdat_t *s = (stepdat_t*)data;
+	buf_c4_t *b = &s->buf[i];
+	kc_c4_t *h = s->p->h->h[i];
+	int j, p = s->p->h->p;
 	for (j = 0; j < b->n; ++j) {
 		khint_t k;
 		int absent;
-		k = kc_c4_put(b->h, b->y[j]>>h->p<<8, &absent);
-		if ((kh_key(b->h, k)&0xff) < 255) ++kh_key(b->h, k);
+		k = kc_c4_put(h, b->a[j]>>p<<8, &absent);
+		if ((kh_key(h, k)&0xff) < 255) ++kh_key(h, k);
 	}
-	b->n = 0;
 }
 
 static void *worker_pipeline(void *data, int step, void *in)
@@ -130,17 +132,20 @@ static void *worker_pipeline(void *data, int step, void *in)
 		int ret;
 		stepdat_t *s;
 		CALLOC(s, 1);
+		s->p = p;
 		while ((ret = kseq_read(p->ks)) >= 0) {
 			int l = p->ks->seq.l;
+			if (l < p->k) continue;
 			if (s->n == s->m) {
 				s->m = s->m < 16? 16 : s->m + (s->n>>1);
 				REALLOC(s->len, s->m);
 				REALLOC(s->seq, s->m);
 			}
-			CALLOC(s->seq[s->n], l);
+			MALLOC(s->seq[s->n], l);
 			memcpy(s->seq[s->n], p->ks->seq.s, l);
 			s->len[s->n++] = l;
 			s->sum_len += l;
+			s->nk += l - p->k + 1;
 			if (s->sum_len >= p->block_len)
 				break;
 		}
@@ -148,14 +153,25 @@ static void *worker_pipeline(void *data, int step, void *in)
 		else return s;
 	} else if (step == 1) {
 		stepdat_t *s = (stepdat_t*)in;
-		int i;
+		int i, n = 1<<p->h->p, m;
+		CALLOC(s->buf, n);
+		m = (int)(s->nk * 1.2 / n) + 1;
+		for (i = 0; i < n; ++i) {
+			s->buf[i].m = m;
+			MALLOC(s->buf[i].a, m);
+		}
 		for (i = 0; i < s->n; ++i) {
-			count_seq_buf(p->h, p->k, s->len[i], s->seq[i]);
+			count_seq_buf(s->buf, p->k, p->h->p, s->len[i], s->seq[i]);
 			free(s->seq[i]);
 		}
 		free(s->seq); free(s->len);
-		kt_for(p->n_thread, worker_for, p->h, 1<<p->h->p);
-		free(s);
+		return s;
+	} else if (step == 2) {
+		stepdat_t *s = (stepdat_t*)in;
+		int i, n = 1<<p->h->p;
+		kt_for(p->n_thread, worker_for, s, n);
+		for (i = 0; i < n; ++i) free(s->buf[i].a);
+		free(s->buf); free(s);
 	}
 	return 0;
 }
@@ -170,7 +186,7 @@ static kc_c4x_t *count_file(const char *fn, int k, int p, int block_size, int n_
 	pl.n_thread = n_thread;
 	pl.h = c4x_init(p);
 	pl.block_len = block_size;
-	kt_pipeline(2, worker_pipeline, &pl, 2);
+	kt_pipeline(3, worker_pipeline, &pl, 3);
 	kseq_destroy(pl.ks);
 	gzclose(fp);
 	return pl.h;
@@ -183,7 +199,7 @@ static void print_hist(const kc_c4x_t *h)
 	int i;
 	for (i = 0; i < 256; ++i) cnt[i] = 0;
 	for (i = 0; i < 1<<h->p; ++i) {
-		kc_c4_t *g = h->b[i].h;
+		kc_c4_t *g = h->h[i];
 		for (k = 0; k < kh_end(g); ++k)
 			if (kh_exist(g, k))
 				++cnt[kh_key(g, k)&0xff];
@@ -218,10 +234,7 @@ int main(int argc, char *argv[])
 	}
 	h = count_file(argv[o.ind], k, p, block_size, n_thread);
 	print_hist(h);
-	for (i = 0; i < 1<<p; ++i) {
-		free(h->b[i].y);
-		kc_c4_destroy(h->b[i].h);
-	}
-	free(h);
+	for (i = 0; i < 1<<p; ++i) kc_c4_destroy(h->h[i]);
+	free(h->h); free(h);
 	return 0;
 }
