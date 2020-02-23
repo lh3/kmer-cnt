@@ -192,18 +192,39 @@ static kc_c4x_t *count_file(const char *fn, int k, int p, int block_size, int n_
 	return pl.h;
 }
 
-static void print_hist(const kc_c4x_t *h)
+typedef struct {
+	uint64_t c[256];
+} buf_cnt_t;
+
+typedef struct {
+	const kc_c4x_t *h;
+	buf_cnt_t *cnt;
+} hist_aux_t;
+
+static void worker_hist(void *data, long i, int tid)
 {
+	hist_aux_t *a = (hist_aux_t*)data;
+	uint64_t *cnt = a->cnt[tid].c;
+	kc_c4_t *g = a->h->h[i];
 	khint_t k;
+	for (k = 0; k < kh_end(g); ++k)
+		if (kh_exist(g, k))
+			++cnt[kh_key(g, k)&0xff];
+}
+
+static void print_hist(const kc_c4x_t *h, int n_thread)
+{
+	hist_aux_t a;
 	uint64_t cnt[256];
-	int i;
+	int i, j;
+	a.h = h;
+	CALLOC(a.cnt, n_thread);
+	kt_for(n_thread, worker_hist, &a, 1<<h->p);
 	for (i = 0; i < 256; ++i) cnt[i] = 0;
-	for (i = 0; i < 1<<h->p; ++i) {
-		kc_c4_t *g = h->h[i];
-		for (k = 0; k < kh_end(g); ++k)
-			if (kh_exist(g, k))
-				++cnt[kh_key(g, k)&0xff];
-	}
+	for (j = 0; j < n_thread; ++j)
+		for (i = 0; i < 256; ++i)
+			cnt[i] += a.cnt[j].c[i];
+	free(a.cnt);
 	for (i = 1; i < 256; ++i)
 		printf("%d\t%ld\n", i, (long)cnt[i]);
 }
@@ -233,7 +254,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 	h = count_file(argv[o.ind], k, p, block_size, n_thread);
-	print_hist(h);
+	print_hist(h, n_thread);
 	for (i = 0; i < 1<<p; ++i) kc_c4_destroy(h->h[i]);
 	free(h->h); free(h);
 	return 0;
