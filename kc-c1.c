@@ -1,15 +1,15 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <zlib.h>
-#include "ketopt.h"
+#include "ketopt.h" // command-line argument parser
 
-#include "kseq.h"
+#include "kseq.h" // FASTA/Q parser
 KSEQ_INIT(gzFile, gzread)
 
-#include "khashl.h"
+#include "khashl.h" // hash table
 KHASHL_MAP_INIT(, kc_c1_t, kc_c1, uint64_t, uint8_t, kh_hash_dummy, kh_eq_generic)
 
-const unsigned char seq_nt4_table[256] = {
+const unsigned char seq_nt4_table[256] = { // translate ACGT to 0123
 	0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
@@ -28,7 +28,7 @@ const unsigned char seq_nt4_table[256] = {
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
 
-static void count_seq(kc_c1_t *h, int k, int len, char *seq)
+static void count_seq(kc_c1_t *h, int k, int len, char *seq) // insert k-mers in $seq to hash table $h
 {
 	int i, l;
 	uint64_t x[2], mask = (1ULL<<k*2) - 1, shift = (k - 1) * 2;
@@ -42,7 +42,7 @@ static void count_seq(kc_c1_t *h, int k, int len, char *seq)
 				uint64_t y = x[0] < x[1]? x[0] : x[1];
 				itr = kc_c1_put(h, y, &absent); // only add one strand!
 				if (absent) kh_val(h, itr) = 0;
-				if (kh_val(h, itr) < 255) ++kh_val(h, itr);
+				if (kh_val(h, itr) < 255) ++kh_val(h, itr); // count if not saturated
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}

@@ -1,14 +1,14 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <zlib.h>
-#include "ketopt.h"
-#include "kthread.h"
+#include "ketopt.h" // command-line argument parser
+#include "kthread.h" // multi-threading models: pipeline and multi-threaded for loop
 
-#include "kseq.h"
+#include "kseq.h" // FASTA/Q parser
 KSEQ_INIT(gzFile, gzread)
 
-#include "khashl.h"
-#define kc_c4_eq(a, b) ((a)>>8 == (b)>>8)
+#include "khashl.h" // hash table
+#define kc_c4_eq(a, b) ((a)>>8 == (b)>>8) // lower 8 bits for counts; higher bits for k-mer
 #define kc_c4_hash(a) ((a)>>8)
 KHASHL_SET_INIT(, kc_c4_t, kc_c4, uint64_t, kc_c4_hash, kc_c4_eq)
 
@@ -16,7 +16,7 @@ KHASHL_SET_INIT(, kc_c4_t, kc_c4, uint64_t, kc_c4_hash, kc_c4_eq)
 #define MALLOC(ptr, len) ((ptr) = (__typeof__(ptr))malloc((len) * sizeof(*(ptr))))
 #define REALLOC(ptr, len) ((ptr) = (__typeof__(ptr))realloc((ptr), (len) * sizeof(*(ptr))))
 
-const unsigned char seq_nt4_table[256] = {
+const unsigned char seq_nt4_table[256] = { // translate ACGT to 0123
 	0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
@@ -35,7 +35,7 @@ const unsigned char seq_nt4_table[256] = {
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
 
-static inline uint64_t hash64(uint64_t key, uint64_t mask)
+static inline uint64_t hash64(uint64_t key, uint64_t mask) // invertible integer hash function
 {
 	key = (~key + (key << 21)) & mask; // key = (key << 21) - key - 1;
 	key = key ^ key >> 24;
@@ -48,13 +48,8 @@ static inline uint64_t hash64(uint64_t key, uint64_t mask)
 }
 
 typedef struct {
-	int n, m;
-	uint64_t *a;
-} buf_c4_t;
-
-typedef struct {
-	int p;
-	kc_c4_t **h;
+	int p; // suffix length; at least 8
+	kc_c4_t **h; // 1<<p hash tables
 } kc_c4x_t;
 
 static kc_c4x_t *c4x_init(int p)
@@ -69,7 +64,12 @@ static kc_c4x_t *c4x_init(int p)
 	return h;
 }
 
-static inline void c4x_insert_buf(buf_c4_t *buf, int p, uint64_t y)
+typedef struct {
+	int n, m;
+	uint64_t *a;
+} buf_c4_t;
+
+static inline void c4x_insert_buf(buf_c4_t *buf, int p, uint64_t y) // insert a k-mer $y to a linear buffer
 {
 	int pre = y & ((1<<p) - 1);
 	buf_c4_t *b = &buf[pre];
@@ -80,7 +80,7 @@ static inline void c4x_insert_buf(buf_c4_t *buf, int p, uint64_t y)
 	b->a[b->n++] = y;
 }
 
-static void count_seq_buf(buf_c4_t *buf, int k, int p, int len, const char *seq)
+static void count_seq_buf(buf_c4_t *buf, int k, int p, int len, const char *seq) // insert k-mers in $seq to linear buffer $buf
 {
 	int i, l;
 	uint64_t x[2], mask = (1ULL<<k*2) - 1, shift = (k - 1) * 2;
@@ -97,13 +97,13 @@ static void count_seq_buf(buf_c4_t *buf, int k, int p, int len, const char *seq)
 	}
 }
 
-typedef struct {
+typedef struct { // global data structure for kt_pipeline()
 	int k, block_len, n_thread;
 	kseq_t *ks;
 	kc_c4x_t *h;
 } pldat_t;
 
-typedef struct {
+typedef struct { // data structure for each step in kt_pipeline()
 	pldat_t *p;
 	int n, m, sum_len, nk;
 	int *len;
@@ -111,7 +111,7 @@ typedef struct {
 	buf_c4_t *buf;
 } stepdat_t;
 
-static void worker_for(void *data, long i, int tid)
+static void worker_for(void *data, long i, int tid) // callback for kt_for()
 {
 	stepdat_t *s = (stepdat_t*)data;
 	buf_c4_t *b = &s->buf[i];
@@ -125,10 +125,10 @@ static void worker_for(void *data, long i, int tid)
 	}
 }
 
-static void *worker_pipeline(void *data, int step, void *in)
+static void *worker_pipeline(void *data, int step, void *in) // callback for kt_pipeline()
 {
 	pldat_t *p = (pldat_t*)data;
-	if (step == 0) {
+	if (step == 0) { // step 1: read a block of sequences
 		int ret;
 		stepdat_t *s;
 		CALLOC(s, 1);
@@ -151,7 +151,7 @@ static void *worker_pipeline(void *data, int step, void *in)
 		}
 		if (s->sum_len == 0) free(s);
 		else return s;
-	} else if (step == 1) {
+	} else if (step == 1) { // step 2: extract k-mers
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->h->p, m;
 		CALLOC(s->buf, n);
@@ -166,7 +166,7 @@ static void *worker_pipeline(void *data, int step, void *in)
 		}
 		free(s->seq); free(s->len);
 		return s;
-	} else if (step == 2) {
+	} else if (step == 2) { // step 3: insert k-mers to hash table
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->h->p;
 		kt_for(p->n_thread, worker_for, s, n);
@@ -201,7 +201,7 @@ typedef struct {
 	buf_cnt_t *cnt;
 } hist_aux_t;
 
-static void worker_hist(void *data, long i, int tid)
+static void worker_hist(void *data, long i, int tid) // callback for kt_for()
 {
 	hist_aux_t *a = (hist_aux_t*)data;
 	uint64_t *cnt = a->cnt[tid].c;

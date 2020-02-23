@@ -1,19 +1,19 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <zlib.h>
-#include "ketopt.h"
+#include "ketopt.h" // command-line argument parser
 
-#include "kseq.h"
+#include "kseq.h" // FASTA/Q parser
 KSEQ_INIT(gzFile, gzread)
 
-#include "khashl.h"
-#define kc_c2_eq(a, b) ((a)>>8 == (b)>>8)
+#include "khashl.h" // hash table
+#define kc_c2_eq(a, b) ((a)>>8 == (b)>>8) // lower 8 bits for counts; higher bits for k-mer
 #define kc_c2_hash(a) ((a)>>8)
 KHASHL_SET_INIT(, kc_c2_t, kc_c2, uint64_t, kc_c2_hash, kc_c2_eq)
 
 #define CALLOC(ptr, len) ((ptr) = (__typeof__(ptr))calloc((len), sizeof(*(ptr))))
 
-const unsigned char seq_nt4_table[256] = {
+const unsigned char seq_nt4_table[256] = { // translate ACGT to 0123
 	0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
@@ -32,7 +32,7 @@ const unsigned char seq_nt4_table[256] = {
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
 
-static inline uint64_t hash64(uint64_t key, uint64_t mask)
+static inline uint64_t hash64(uint64_t key, uint64_t mask) // invertible integer hash function
 {
 	key = (~key + (key << 21)) & mask; // key = (key << 21) - key - 1;
 	key = key ^ key >> 24;
@@ -61,16 +61,16 @@ static kc_c2x_t *c2x_init(int p)
 	return h;
 }
 
-static inline void c2x_insert(kc_c2x_t *h, uint64_t y)
+static inline void c2x_insert(kc_c2x_t *h, uint64_t y) // insert a k-mer $y to hash table $h
 {
 	int absent, pre = y & ((1<<h->p) - 1);
 	kc_c2_t *g = h->h[pre];
 	khint_t k;
 	k = kc_c2_put(g, y>>h->p<<8, &absent);
-	if ((kh_key(g, k)&0xff) < 255) ++kh_key(g, k);
+	if ((kh_key(g, k)&0xff) < 255) ++kh_key(g, k); // count if not saturated
 }
 
-static void count_seq(kc_c2x_t *h, int k, int len, char *seq)
+static void count_seq(kc_c2x_t *h, int k, int len, char *seq) // insert k-mers in $seq to hash table $h
 {
 	int i, l;
 	uint64_t x[2], mask = (1ULL<<k*2) - 1, shift = (k - 1) * 2;
