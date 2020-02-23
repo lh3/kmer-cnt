@@ -30,7 +30,7 @@ def count_stdin(k):
 		else:
 			seq.append(line[:-1])
 	if len(seq) > 0:
-		count_kmer(counter, k, ''.join(seq))
+		count_kmer(counter, k, ''.join(seq).upper())
 	return counter
 
 def print_hist(counter):
