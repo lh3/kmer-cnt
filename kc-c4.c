@@ -211,7 +211,7 @@ static void print_hist(const kc_c4x_t *h)
 int main(int argc, char *argv[])
 {
 	kc_c4x_t *h;
-	int i, c, k = 31, p = 8, block_size = 10000000, n_thread = 6;
+	int i, c, k = 31, p = 8, block_size = 10000000, n_thread = 4;
 	ketopt_t o = KETOPT_INIT;
 	while ((c = ketopt(&o, argc, argv, 1, "k:p:b:t:", 0)) >= 0) {
 		if (c == 'k') k = atoi(o.arg);
