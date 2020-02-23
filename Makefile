@@ -1,6 +1,6 @@
 CFLAGS=-g -Wall -O2
 LIBS=-lz
-PROG=kc-c1 kc-c2 kc-c3
+PROG=kc-c1 kc-c2 kc-c3 kc-c4
 
 ifneq ($(asan),)
 	CFLAGS+=-fsanitize=address
@@ -19,6 +19,9 @@ kc-c2:kc-c2.c khashl.h ketopt.h kseq.h
 
 kc-c3:kc-c3.c khashl.h ketopt.h kseq.h kthread.h
 	$(CC) $(CFLAGS) -o $@ kc-c3.c kthread.c $(LIBS) -lpthread
+
+kc-c4:kc-c4.c khashl.h ketopt.h kseq.h kthread.h
+	$(CC) $(CFLAGS) -o $@ kc-c4.c kthread.c $(LIBS) -lpthread
 
 clean:
 	rm -fr *.dSYM $(PROG)

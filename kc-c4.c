@@ -8,9 +8,9 @@
 KSEQ_INIT(gzFile, gzread)
 
 #include "khashl.h"
-#define kc_c3_eq(a, b) ((a)>>8 == (b)>>8)
-#define kc_c3_hash(a) ((a)>>8)
-KHASHL_SET_INIT(, kc_c3_t, kc_c3, uint64_t, kc_c3_hash, kc_c3_eq)
+#define kc_c4_eq(a, b) ((a)>>8 == (b)>>8)
+#define kc_c4_hash(a) ((a)>>8)
+KHASHL_SET_INIT(, kc_c4_t, kc_c4, uint64_t, kc_c4_hash, kc_c4_eq)
 
 #define CALLOC(ptr, len) ((ptr) = (__typeof__(ptr))calloc((len), sizeof(*(ptr))))
 #define REALLOC(ptr, len) ((ptr) = (__typeof__(ptr))realloc((ptr), (len) * sizeof(*(ptr))))
@@ -47,32 +47,40 @@ static inline uint64_t hash64(uint64_t key, uint64_t mask)
 }
 
 typedef struct {
-	int p;
-	kc_c3_t **h;
-} kc_c3x_t;
+	int n, m;
+	uint64_t *y;
+	kc_c4_t *h;
+} buf_c4_t;
 
-static kc_c3x_t *c3x_init(int p)
+typedef struct {
+	int p;
+	buf_c4_t *b;
+} kc_c4x_t;
+
+static kc_c4x_t *c4x_init(int p)
 {
 	int i;
-	kc_c3x_t *h;
+	kc_c4x_t *h;
 	CALLOC(h, 1);
-	CALLOC(h->h, 1<<p);
+	CALLOC(h->b, 1<<p);
 	h->p = p;
 	for (i = 0; i < 1<<p; ++i)
-		h->h[i] = kc_c3_init();
+		h->b[i].h = kc_c4_init();
 	return h;
 }
 
-static inline void c3x_insert(kc_c3x_t *h, uint64_t y)
+static inline void c4x_insert_buf(kc_c4x_t *h, uint64_t y)
 {
-	int absent, pre = y & ((1<<h->p) - 1);
-	kc_c3_t *g = h->h[pre];
-	khint_t k;
-	k = kc_c3_put(g, y>>h->p<<8, &absent);
-	if ((kh_key(g, k)&0xff) < 255) ++kh_key(g, k);
+	int pre = y & ((1<<h->p) - 1);
+	buf_c4_t *b = &h->b[pre];
+	if (b->n == b->m) {
+		b->m = b->m < 16? 16 : b->m + (b->m>>1);
+		REALLOC(b->y, b->m);
+	}
+	b->y[b->n++] = y;
 }
 
-static void count_seq(kc_c3x_t *h, int k, int len, char *seq)
+static void count_seq_buf(kc_c4x_t *h, int k, int len, char *seq)
 {
 	int i, l;
 	uint64_t x[2], mask = (1ULL<<k*2) - 1, shift = (k - 1) * 2;
@@ -83,16 +91,16 @@ static void count_seq(kc_c3x_t *h, int k, int len, char *seq)
 			x[1] = x[1] >> 2 | (uint64_t)(3 - c) << shift;  // reverse strand
 			if (++l >= k) { // we find a k-mer
 				uint64_t y = x[0] < x[1]? x[0] : x[1];
-				c3x_insert(h, hash64(y, mask));
+				c4x_insert_buf(h, hash64(y, mask));
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}
 }
 
 typedef struct {
-	int k, block_len;
+	int k, block_len, n_thread;
 	kseq_t *ks;
-	kc_c3x_t *h;
+	kc_c4x_t *h;
 } pldat_t;
 
 typedef struct {
@@ -100,6 +108,20 @@ typedef struct {
 	int *len;
 	char **seq;
 } stepdat_t;
+
+static void worker_for(void *data, long i, int tid)
+{
+	kc_c4x_t *h = (kc_c4x_t*)data;
+	buf_c4_t *b = &h->b[i];
+	int j;
+	for (j = 0; j < b->n; ++j) {
+		khint_t k;
+		int absent;
+		k = kc_c4_put(b->h, b->y[j]>>h->p<<8, &absent);
+		if ((kh_key(b->h, k)&0xff) < 255) ++kh_key(b->h, k);
+	}
+	b->n = 0;
+}
 
 static void *worker_pipeline(void *data, int step, void *in)
 {
@@ -128,22 +150,25 @@ static void *worker_pipeline(void *data, int step, void *in)
 		stepdat_t *s = (stepdat_t*)in;
 		int i;
 		for (i = 0; i < s->n; ++i) {
-			count_seq(p->h, p->k, s->len[i], s->seq[i]);
+			count_seq_buf(p->h, p->k, s->len[i], s->seq[i]);
 			free(s->seq[i]);
 		}
-		free(s->seq); free(s->len); free(s);
+		free(s->seq); free(s->len);
+		kt_for(p->n_thread, worker_for, p->h, 1<<p->h->p);
+		free(s);
 	}
 	return 0;
 }
 
-static kc_c3x_t *count_file(const char *fn, int k, int p, int block_size)
+static kc_c4x_t *count_file(const char *fn, int k, int p, int block_size, int n_thread)
 {
 	pldat_t pl;
 	gzFile fp;
 	if ((fp = gzopen(fn, "r")) == 0) return 0;
 	pl.ks = kseq_init(fp);
 	pl.k = k;
-	pl.h = c3x_init(p);
+	pl.n_thread = n_thread;
+	pl.h = c4x_init(p);
 	pl.block_len = block_size;
 	kt_pipeline(2, worker_pipeline, &pl, 2);
 	kseq_destroy(pl.ks);
@@ -151,14 +176,14 @@ static kc_c3x_t *count_file(const char *fn, int k, int p, int block_size)
 	return pl.h;
 }
 
-static void print_hist(const kc_c3x_t *h)
+static void print_hist(const kc_c4x_t *h)
 {
 	khint_t k;
 	uint64_t cnt[256];
 	int i;
 	for (i = 0; i < 256; ++i) cnt[i] = 0;
 	for (i = 0; i < 1<<h->p; ++i) {
-		kc_c3_t *g = h->h[i];
+		kc_c4_t *g = h->b[i].h;
 		for (k = 0; k < kh_end(g); ++k)
 			if (kh_exist(g, k))
 				++cnt[kh_key(g, k)&0xff];
@@ -169,26 +194,34 @@ static void print_hist(const kc_c3x_t *h)
 
 int main(int argc, char *argv[])
 {
-	kc_c3x_t *h;
-	int i, c, k = 31, p = 8, block_size = 10000000;
+	kc_c4x_t *h;
+	int i, c, k = 31, p = 8, block_size = 10000000, n_thread = 6;
 	ketopt_t o = KETOPT_INIT;
-	while ((c = ketopt(&o, argc, argv, 1, "k:p:b:", 0)) >= 0) {
+	while ((c = ketopt(&o, argc, argv, 1, "k:p:b:t:", 0)) >= 0) {
 		if (c == 'k') k = atoi(o.arg);
 		else if (c == 'p') p = atoi(o.arg);
 		else if (c == 'b') block_size = atoi(o.arg);
+		else if (c == 't') n_thread = atoi(o.arg);
 	}
 	if (argc - o.ind < 1) {
-		fprintf(stderr, "Usage: kc-c3 [-k %d] [-p %d] [-b %d] <in.fa>\n", k, p, block_size);
+		fprintf(stderr, "Usage: kc-c4 [options] <in.fa>\n");
+		fprintf(stderr, "Options:\n");
+		fprintf(stderr, "  -k INT     k-mer size [%d]\n", k);
+		fprintf(stderr, "  -p INT     prefix length [%d]\n", p);
+		fprintf(stderr, "  -b INT     block size [%d]\n", block_size);
+		fprintf(stderr, "  -t INT     number of worker threads [%d]\n", n_thread);
 		return 1;
 	}
 	if (p < 8) {
 		fprintf(stderr, "ERROR: -p should be at least 8\n");
 		return 1;
 	}
-	h = count_file(argv[o.ind], k, p, block_size);
+	h = count_file(argv[o.ind], k, p, block_size, n_thread);
 	print_hist(h);
-	for (i = 0; i < 1<<p; ++i)
-		kc_c3_destroy(h->h[i]);
+	for (i = 0; i < 1<<p; ++i) {
+		free(h->b[i].y);
+		kc_c4_destroy(h->b[i].h);
+	}
 	free(h);
 	return 0;
 }
