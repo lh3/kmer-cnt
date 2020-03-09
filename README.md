@@ -16,6 +16,12 @@ important classes of algorithms in Bioinformatics. Here we will implement basic
 k-mer counting algorithms but with advanced engineering tricks. We will see how
 far better engineering can go.
 
+In this repo, each `{kc,yak}-*.*` file implements a standalone k-mer counter.
+As to other files: ketopt.h is a command line option parser; khashl.h is a
+generic hash table library in C; kseq.h is a fasta/fastq parser; kthread.{h,c}
+provides two multi-threading models; robin\_hood.h is a C++11 hash table
+library.
+
 ## Results
 
 We provide eight k-mer counters, which are detailed below the result table. All
