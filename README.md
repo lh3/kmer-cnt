@@ -5,20 +5,20 @@ git clone https://github.com/lh3/kmer-cnt
 cd kmer-cnt
 make  # C++11 required to compile the two C++ implementations
 wget https://github.com/lh3/kmer-cnt/releases/download/v0.1/M_abscessus_HiSeq_10M.fa.gz
-./kc-c4 M_abscessus_HiSeq_10M.fa.gz > kc-c4.out
+./yak-count M_abscessus_HiSeq_10M.fa.gz > kc-c4.out
 ```
 
 ## Introduction
 
 K-mer counting is the foundation of many mappers, assemblers and miscellaneous
 tools (e.g. genotypers, metagenomics profilers, etc). It is one of the most
-important algorithms in Bioinformatics. Here we will implement basic k-mer
-counting algorithms but with advanced engineering tricks. We will see how far
-better engineering can go.
+important classes of algorithms in Bioinformatics. Here we will implement basic
+k-mer counting algorithms but with advanced engineering tricks. We will see how
+far better engineering can go.
 
 ## Results
 
-We provide seven k-mer counters, which are detailed below the result table. All
+We provide eight k-mer counters, which are detailed below the result table. All
 implementations count canonical k-mers, the lexicographically *smaller* k-mer
 between the k-mers on the two DNA strands.
 
@@ -37,11 +37,11 @@ They were run on a Linux server equipped with two EPYC 7301 CPUs and 512GB RAM.
 |[kc-c2](kc-c2.c)               |<=32-mer; <1024 count|           38.7|        37.9|         1.05|
 |[kc-c3](kc-c3.c)               |<=32-mer; <1024 count|           34.1|        38.7|         1.15|
 |[kc-c4](kc-c4.c) (2+4 threads) |<=32-mer; <1024 count|            7.5|        35.1|         1.27|
-|[yak-count](yak-count.c) (2+4; >=2 count)|<=32-mer; <1024 count| 14.4|        54.0|         0.47|
+|[yak-count](yak-count.c) (2+4; >=2 count)|<=32-mer; <1024 count| 14.6|        54.8|         0.47|
 |[jellyfish2][jf] (16 threads)  |                    |            10.8|       163.9|         0.82|
 |[KMC3][KMC] (16 thr; in-mem)   |                    |             9.2|        36.2|         5.02|
 
-Among these k-mer counters:
+## Discussions
 
 * [kc-py1.py](kc-py1.py) is a basic Python3 implementation. It uses string
   translate for fast complementary. Interestingly, pypy is much slower than
@@ -77,7 +77,7 @@ Among these k-mer counters:
   also uses less CPU time. This is probably because batching helps data
   locality.
 
-* [yak-count](yak-count.c) is adapted from [yak][yak] and uses the same kc-c4
+* [yak-count.c](yak-count.c) is adapted from [yak][yak] and uses the same kc-c4
   algorithm. Similar to [BFCounter][BFCnt], it optionally adds a bloom filter
   to filter out most singleton k-mers (k-mers occurring only once in the
   input). Yak needs to update the bloom filter, read the input twice and count
@@ -100,10 +100,10 @@ Among these k-mer counters:
 
 The k-mer counters here are fairly basic implementations only using generic
 hash tables. Nonetheless, we show better engineering can carry the basic idea a
-long way. If you want to implement your own k-mer counter, yak-count could be a
-good starting point. It is fast and relatively simple. By the way, if you have
-an efficient lightweight k-mer counter, please let me know. I will be happy to
-add it to the table.
+long way. If you want to implement your own k-mer counter,
+[yak-count.c](yak-count.c) could be a good starting point. It is fast and
+relatively simple. By the way, if you have an efficient lightweight k-mer
+counter, please let me know. I will be happy to add it to the table.
 
 [jf]: http://www.genome.umd.edu/jellyfish.html
 [unordermap]: http://www.cplusplus.com/reference/unordered_map/unordered_map/
