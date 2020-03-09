@@ -8,8 +8,9 @@
 KSEQ_INIT(gzFile, gzread)
 
 #include "khashl.h" // hash table
-#define kc_c3_eq(a, b) ((a)>>8 == (b)>>8) // lower 8 bits for counts; higher bits for k-mer
-#define kc_c3_hash(a) ((a)>>8)
+#define KC_BITS 10
+#define kc_c3_eq(a, b) ((a)>>KC_BITS == (b)>>KC_BITS) // lower 8 bits for counts; higher bits for k-mer
+#define kc_c3_hash(a) ((a)>>KC_BITS)
 KHASHL_SET_INIT(, kc_c3_t, kc_c3, uint64_t, kc_c3_hash, kc_c3_eq)
 
 #define CALLOC(ptr, len) ((ptr) = (__typeof__(ptr))calloc((len), sizeof(*(ptr))))
@@ -68,7 +69,7 @@ static inline void c3x_insert(kc_c3x_t *h, uint64_t y) // insert a k-mer $y to h
 	int absent, pre = y & ((1<<h->p) - 1);
 	kc_c3_t *g = h->h[pre];
 	khint_t k;
-	k = kc_c3_put(g, y>>h->p<<8, &absent);
+	k = kc_c3_put(g, y>>h->p<<KC_BITS, &absent);
 	if ((kh_key(g, k)&0xff) < 255) ++kh_key(g, k); // count if not saturated
 }
 
@@ -170,7 +171,7 @@ static void print_hist(const kc_c3x_t *h)
 int main(int argc, char *argv[])
 {
 	kc_c3x_t *h;
-	int i, c, k = 31, p = 8, block_size = 10000000;
+	int i, c, k = 31, p = KC_BITS, block_size = 10000000;
 	ketopt_t o = KETOPT_INIT;
 	while ((c = ketopt(&o, argc, argv, 1, "k:p:b:", 0)) >= 0) {
 		if (c == 'k') k = atoi(o.arg);
@@ -181,8 +182,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Usage: kc-c3 [-k %d] [-p %d] [-b %d] <in.fa>\n", k, p, block_size);
 		return 1;
 	}
-	if (p < 8) {
-		fprintf(stderr, "ERROR: -p should be at least 8\n");
+	if (p < KC_BITS) {
+		fprintf(stderr, "ERROR: -p should be at least %d\n", KC_BITS);
 		return 1;
 	}
 	h = count_file(argv[o.ind], k, p, block_size);

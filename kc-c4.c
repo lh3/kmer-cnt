@@ -8,8 +8,10 @@
 KSEQ_INIT(gzFile, gzread)
 
 #include "khashl.h" // hash table
-#define kc_c4_eq(a, b) ((a)>>8 == (b)>>8) // lower 8 bits for counts; higher bits for k-mer
-#define kc_c4_hash(a) ((a)>>8)
+#define KC_BITS 10
+#define KC_MAX ((1<<KC_BITS) - 1)
+#define kc_c4_eq(a, b) ((a)>>KC_BITS == (b)>>KC_BITS) // lower 8 bits for counts; higher bits for k-mer
+#define kc_c4_hash(a) ((a)>>KC_BITS)
 KHASHL_SET_INIT(, kc_c4_t, kc_c4, uint64_t, kc_c4_hash, kc_c4_eq)
 
 #define CALLOC(ptr, len) ((ptr) = (__typeof__(ptr))calloc((len), sizeof(*(ptr))))
@@ -120,8 +122,8 @@ static void worker_for(void *data, long i, int tid) // callback for kt_for()
 	for (j = 0; j < b->n; ++j) {
 		khint_t k;
 		int absent;
-		k = kc_c4_put(h, b->a[j]>>p<<8, &absent);
-		if ((kh_key(h, k)&0xff) < 255) ++kh_key(h, k);
+		k = kc_c4_put(h, b->a[j]>>p<<KC_BITS, &absent);
+		if ((kh_key(h, k)&KC_MAX) < KC_MAX) ++kh_key(h, k);
 	}
 }
 
@@ -208,8 +210,10 @@ static void worker_hist(void *data, long i, int tid) // callback for kt_for()
 	kc_c4_t *g = a->h->h[i];
 	khint_t k;
 	for (k = 0; k < kh_end(g); ++k)
-		if (kh_exist(g, k))
-			++cnt[kh_key(g, k)&0xff];
+		if (kh_exist(g, k)) {
+			int c = kh_key(g, k) & KC_MAX;
+			++cnt[c < 255? c : 255];
+		}
 }
 
 static void print_hist(const kc_c4x_t *h, int n_thread)
@@ -232,7 +236,7 @@ static void print_hist(const kc_c4x_t *h, int n_thread)
 int main(int argc, char *argv[])
 {
 	kc_c4x_t *h;
-	int i, c, k = 31, p = 8, block_size = 10000000, n_thread = 4;
+	int i, c, k = 31, p = KC_BITS, block_size = 10000000, n_thread = 4;
 	ketopt_t o = KETOPT_INIT;
 	while ((c = ketopt(&o, argc, argv, 1, "k:p:b:t:", 0)) >= 0) {
 		if (c == 'k') k = atoi(o.arg);
@@ -249,8 +253,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "  -t INT     number of worker threads [%d]\n", n_thread);
 		return 1;
 	}
-	if (p < 8) {
-		fprintf(stderr, "ERROR: -p should be at least 8\n");
+	if (p < KC_BITS) {
+		fprintf(stderr, "ERROR: -p should be at least %d\n", KC_BITS);
 		return 1;
 	}
 	h = count_file(argv[o.ind], k, p, block_size, n_thread);

@@ -33,18 +33,21 @@ They were run on a Linux server equipped with two EPYC 7301 CPUs and 512GB RAM.
 |[kc-py1](kc-py1.py) + Pypy7.3  |                    |          1220.8|      1220.8|        12.21|
 |[kc-cpp1](kc-cpp1.cpp)         |                    |           528.0|       527.9|         8.27|
 |[kc-cpp2](kc-cpp2.cpp)         |                    |           319.6|       319.6|         6.90|
-|[kc-c1](kc-c1.c)               |<=32-mer            |            39.0|        39.0|         1.52|
-|[kc-c2](kc-c2.c)               |<=32-mer; <256 count|            37.8|        37.8|         1.02|
-|[kc-c3](kc-c3.c)               |<=32-mer; <256 count|            36.0|        40.6|         1.07|
-|[kc-c4](kc-c4.c) (2+4 threads) |<=32-mer; <256 count|             8.4|        37.6|         1.24|
-|[jellyfish2][jf] (16 threads)  |                    |            13.6|       212.7|         0.82|
+|[kc-c1](kc-c1.c)               |<=32-mer            |            39.3|        38.3|         1.52|
+|[kc-c2](kc-c2.c)               |<=32-mer; <1024 count|           38.7|        37.9|         1.05|
+|[kc-c3](kc-c3.c)               |<=32-mer; <1024 count|           34.1|        38.7|         1.15|
+|[kc-c4](kc-c4.c) (2+4 threads) |<=32-mer; <1024 count|            7.5|        35.1|         1.27|
+|[yak-count](yak-count.c) (2+4; >=2 count)|<=32-mer; <1024 count| 14.4|        54.0|         0.47|
+|[jellyfish2][jf] (16 threads)  |                    |            10.8|       163.9|         0.82|
+|[KMC3][KMC] (16 thr; in-mem)   |                    |             9.2|        36.2|         5.02|
 
 Among these k-mer counters:
 
 * [kc-py1.py](kc-py1.py) is a basic Python3 implementation. It uses string
   translate for fast complementary. Interestingly, pypy is much slower than
   python3. Perhaps the official python3 comes with a better hash table
-  implementation. Just a guess.
+  implementation. Just a guess. I often recommend pypy over python. I need to
+  be more careful about this recommendation in future.
 
 * [kc-cpp1.cpp](kc-cpp1.cpp) implements a basic counter in C++11 using STL's
   [unordered\_map][unordermap]. It is slower than python3. This is partly
@@ -60,25 +63,53 @@ Among these k-mer counters:
   This dramatically improves speed and reduces the peak memory. Most practical
   k-mer counters employs bit packing.
 
-* [kc-c2.c](kc-c2.c) uses a collection of hash tables to save 8 bits for
-  counter. This reduces the peak memory.
+* [kc-c2.c](kc-c2.c) uses an ensemble of hash tables to save 8 bits for
+  counter. This reduces the peak memory. The key advantage of using multiple
+  hash tables is to implement multithreading. See below.
 
 * [kc-c3.c](kc-c3.c) puts file reading and parsing into a separate thread. The
   performance improvement is minor here, but it sets the stage for the next
   multi-threaded implementation.
 
-* [kc-c4.c](kc-c4.c) is the fastest counter in this series. Due to the use of a
-  collection of hash tables in kc-c2, we can parallelize the insertion of a
-  batch of k-mers. On this particular test dataset, kc-c4 is faster than
-  the fastest in-memory k-mer counter [jellyfish2][jf] to date. Although kc-c4
-  uses more memory and imposes more restrictions, it is much simpler.
+* [kc-c4.c](kc-c4.c) is the fastest counter in this series. Due to the use of
+  an ensembl of hash tables in kc-c2, we can parallelize the insertion of a
+  batch of k-mers. It is much faster than the previous versions. Notably, kc-c4
+  also uses less CPU time. This is probably because batching helps data
+  locality.
+
+* [yak-count](yak-count.c) is adapted from [yak][yak] and uses the same kc-c4
+  algorithm. Similar to [BFCounter][BFCnt], it optionally adds a bloom filter
+  to filter out most singleton k-mers (k-mers occurring only once in the
+  input). Yak needs to update the bloom filter, read the input twice and count
+  twice. It is slower but uses less memory. Yak-count is the most complex
+  example in this repo, but it is still short. Its code is also better
+  organized. Command line: `-b30` (bloom filter with 1 billion bits).
+
+* [jellyfish2][jf] is probably the fastest in-memory k-mer counter to date. It
+  uses less memory and more flexible than kc-c4, but it is slower and much more
+  complex. Command line: `count -m 31 -C -s 100000000 -o /dev/null -t 16`.
+
+* [KMC3][KMC] is one of the fastest k-mer counters. It uses minimizers and
+  relies on sorting. KMC3 is run in the in-memory mode here. The disk mode is
+  as fast. KMC3 is optimized for counting much larger datasets. Although it
+  uses more RAM here, it generally uses less RAM than jellyfish2 and other
+  in-memory counters given high-coverage human data. Command line: `-k31 -t16
+  -r -fa`.
 
 ## Conclusions
 
-Better engineering may make big impact on performance.
+The k-mer counters here are fairly basic implementations only using generic
+hash tables. Nonetheless, we show better engineering can carry the basic idea a
+long way. If you want to implement your own k-mer counter, yak-count could be a
+good starting point. It is fast and relatively simple. By the way, if you have
+an efficient lightweight k-mer counter, please let me know. I will be happy to
+add it to the table.
 
 [jf]: http://www.genome.umd.edu/jellyfish.html
 [unordermap]: http://www.cplusplus.com/reference/unordered_map/unordered_map/
 [rhhash]: https://github.com/martinus/robin-hood-hashing
 [rhbench]: https://martin.ankerl.com/2019/04/01/hashmap-benchmarks-01-overview/
 [gage-b]: https://ccb.jhu.edu/gage_b/datasets/index.html
+[yak]: https://github.com/lh3/yak
+[BFCnt]: https://github.com/pmelsted/BFCounter
+[KMC]: https://github.com/refresh-bio/KMC
