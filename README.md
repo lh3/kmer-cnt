@@ -67,7 +67,9 @@ They were run on a Linux server equipped with two EPYC 7301 CPUs and 512GB RAM.
 
 * [kc-c1.c](kc-c1.c) packs k-mers no longer than 32bp into 64-bit integers.
   This dramatically improves speed and reduces the peak memory. Most practical
-  k-mer counters employs bit packing.
+  k-mer counters employs bit packing. Excluding library files, this counter has
+  less than 100 coding lines, not much more complex than the C++ or the python
+  implementations.
 
 * [kc-c2.c](kc-c2.c) uses an ensemble of hash tables to save 8 bits for
   counter. This reduces the peak memory. The key advantage of using multiple
