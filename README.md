@@ -110,8 +110,8 @@ The k-mer counters here are fairly basic implementations only using generic
 hash tables. Nonetheless, we show better engineering can carry the basic idea a
 long way. If you want to implement your own k-mer counter,
 [yak-count.c](yak-count.c) could be a good starting point. It is fast and
-relatively simple. By the way, if you have an efficient lightweight k-mer
-counter, please let me know. I will be happy to add it to the table.
+relatively simple. By the way, if you have an efficient and simple k-mer
+counter (implemented in a few files), please let me know. I will be happy to add it to the table.
 
 [jf]: http://www.genome.umd.edu/jellyfish.html
 [unordermap]: http://www.cplusplus.com/reference/unordered_map/unordered_map/
