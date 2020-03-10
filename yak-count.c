@@ -450,6 +450,19 @@ yak_ch_t *yak_count(const char *fn, const yak_copt_t *opt, yak_ch_t *h0)
 	return pl.h;
 }
 
+yak_ch_t *yak_count_file(const char *fn1, const char *fn2, const yak_copt_t *opt)
+{
+	yak_ch_t *h;
+	h = yak_count(fn1, opt, 0); // if bloom filter is in use, this gets approximate counts
+	if (opt->bf_shift > 0) { // bloom filter is in use
+		yak_ch_destroy_bf(h); // deallocate bloom filter
+		yak_ch_clear(h, opt->n_thread); // set counts to 0
+		h = yak_count(fn2? fn2 : fn1, opt, h); // count again
+		yak_ch_shrink(h, 2, YAK_MAX_COUNT, opt->n_thread); // drop singleton k-mers caused by false positives in bloom filter
+	}
+	return h;
+}
+
 #include "ketopt.h"
 
 int main(int argc, char *argv[])
@@ -483,14 +496,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "ERROR: -p should be at least %d\n", YAK_COUNTER_BITS);
 		return 1;
 	}
-	h = yak_count(argv[o.ind], &opt, 0);
-	if (opt.bf_shift > 0) {
-		yak_ch_destroy_bf(h);
-		yak_ch_clear(h, opt.n_thread);
-		h = yak_count(argc - o.ind >= 2? argv[o.ind+1] : argv[o.ind], &opt, h);
-		yak_ch_shrink(h, 2, YAK_MAX_COUNT, opt.n_thread);
-		fprintf(stderr, "[M::%s] %ld distinct k-mers after shrinking\n", __func__, (long)h->tot);
-	}
+	h = yak_count_file(argv[o.ind], argc - o.ind >= 2? argv[o.ind+1] : argv[o.ind], &opt);
+	fprintf(stderr, "[M::%s] %ld distinct k-mers after shrinking\n", __func__, (long)h->tot);
 	int i;
 	int64_t cnt[YAK_N_COUNTS];
 	yak_ch_hist(h, cnt, opt.n_thread);
